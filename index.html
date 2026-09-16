@@ -30,7 +30,7 @@
         await OneSignal.init({
             appId: "95e171c0-6bd4-4fee-ba5b-7266370f947d",
             serviceWorkerOverrideForTypical: true,
-            path: "https://the-best-academy.vercel.app/OneSignalSDKWorker.js",
+            path: "https://the-best-app.vercel.app/OneSignalSDKWorker.js",
             serviceWorkerParam: { scope: "/" },
             serviceWorkerPath: "OneSignalSDKWorker.js",
         });
@@ -3008,7 +3008,8 @@ let appData = {
     homeworkAnswers: [],   // إجابات الواجبات
     meetings: [],          // الاجتماعات
     meetingAttendance: [],
-     exams: [],           // <-- أضف هذا
+    exams: [], 
+    notifications: [],          // <-- أضف هذا
     examAttendance: []   // حضور الاجتماعات
 };
 
@@ -5048,7 +5049,7 @@ async function sendPushNotification(accountId, title, body, data = {}) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': 'Basic os_v2_app_sxqxdqdl2rh65os3ojtdod4upxwtfs4rcfeec7n2lnzby5jgx4a4hb5gtddnh7nz5jt3hkbnlfyaoxqfwcl5t7e5nkla55asm7ufnwa'
+                'Authorization': 'Basic os_v2_app_sxqxdqdl2rh65os3ojtdod4upu5udqdm4j5enyeztw4lbwzgkc4nxb32ttc37lli2nefv2i7j6copc62hocpeaqbxjaddfpkliix2wi'
             },
             body: JSON.stringify(notification)
         });
@@ -5087,6 +5088,7 @@ async function saveAllDataToFirebase() {
             meetings: appData.meetings || [],
             meetingAttendance: appData.meetingAttendance || [],
             exams: appData.exams || [],
+            notifications: appData.notifications || [],
             examAttendance: appData.examAttendance || []
         });
         console.log('✅ All data saved to Firebase');
@@ -5096,6 +5098,420 @@ async function saveAllDataToFirebase() {
         showToast('خطأ في حفظ البيانات', 'error');
         return false;
     }
+}
+
+// ============================================================
+//              🔔 NOTIFICATIONS - BELL
+// ============================================================
+
+function renderNotificationBell() {
+    if (!currentUser || currentUser.isAdmin) return '';
+    
+    // ===== عدد الإشعارات غير المقروءة =====
+    const unreadCount = appData.notifications.filter(n => 
+        n.studentId === currentUser.id && !n.isRead
+    ).length;
+    
+    const isLightMode = document.body.classList.contains('light-mode');
+    const accentColor = isLightMode ? '#6C4CE0' : '#8B6FF5';
+    const textColor = isLightMode ? '#2D1B4E' : '#E8E4F5';
+    
+    return `
+        <button onclick="openNotificationsModal()" 
+                id="notificationBell"
+                style="
+                    position: relative;
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 50%;
+                    border: 1.5px solid ${accentColor};
+                    background: ${isLightMode ? 'rgba(108,76,224,0.08)' : 'rgba(139,111,245,0.12)'};
+                    color: ${accentColor};
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 13px;
+                    transition: all 0.3s ease;
+                    flex-shrink: 0;
+                    padding: 0;
+                "
+                onmouseover="this.style.transform='scale(1.1)'"
+                onmouseout="this.style.transform='scale(1)'"
+                title="الإشعارات">
+            <i class="fas fa-bell"></i>
+            ${unreadCount > 0 ? `
+                <span style="
+                    position: absolute;
+                    top: -4px;
+                    right: -4px;
+                    background: linear-gradient(135deg, #e74c3c, #c0392b);
+                    color: white;
+                    font-size: 9px;
+                    font-weight: 700;
+                    min-width: 16px;
+                    height: 16px;
+                    border-radius: 10px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 0 4px;
+                    font-family: 'Cairo', sans-serif;
+                    box-shadow: 0 2px 6px rgba(231,76,60,0.4);
+                    animation: bellPulse 1.5s ease-in-out infinite;
+                ">
+                    ${unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+            ` : ''}
+        </button>
+    `;
+}
+
+// ============================================================
+//              🔔 OPEN NOTIFICATIONS MODAL
+// ============================================================
+
+function openNotificationsModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.id = 'notificationsModal';
+    modal.style.cssText = `
+        display: flex;
+        position: fixed;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        background: rgba(0,0,0,0.75);
+        backdrop-filter: blur(8px);
+        z-index: 4000;
+        justify-content: center;
+        align-items: center;
+        padding: 15px;
+    `;
+    
+    const isLightMode = document.body.classList.contains('light-mode');
+    const bgColor = isLightMode ? '#ffffff' : '#0a1628';
+    const textColor = isLightMode ? '#2D1B4E' : '#E8E4F5';
+    const textMuted = isLightMode ? 'rgba(45,27,78,0.4)' : 'rgba(232,228,245,0.3)';
+    const accentColor = isLightMode ? '#6C4CE0' : '#8B6FF5';
+    const cardBg = isLightMode ? 'rgba(108,76,224,0.04)' : 'rgba(255,255,255,0.03)';
+    const cardBorder = isLightMode ? 'rgba(108,76,224,0.08)' : 'rgba(255,255,255,0.06)';
+    
+    // ===== جلب إشعارات الطالب =====
+    const myNotifications = appData.notifications
+        .filter(n => n.studentId === currentUser.id)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    
+    let notificationsHtml = '';
+    
+    if (myNotifications.length === 0) {
+        notificationsHtml = `
+            <div style="text-align:center; padding:50px 20px;">
+                <i class="fas fa-bell-slash" style="font-size:48px; color:${textMuted}; display:block; margin-bottom:15px;"></i>
+                <p style="color:${textMuted}; font-size:15px;">لا توجد إشعارات حالياً</p>
+                <p style="color:${textMuted}; font-size:12px; margin-top:5px;">هتظهر هنا لما يكون في جديد</p>
+            </div>
+        `;
+    } else {
+        notificationsHtml = myNotifications.map(n => {
+            const typeIcons = {
+                'homework': { icon: 'fa-file-alt', color: '#3498db' },
+                'exam': { icon: 'fa-pencil-alt', color: '#e8b931' },
+                'meeting': { icon: 'fa-calendar-alt', color: '#e74c3c' },
+                'points': { icon: 'fa-star', color: '#f39c12' },
+                'welcome': { icon: 'fa-hand-wave', color: '#2ecc71' },
+                'general': { icon: 'fa-info-circle', color: '#9b59b6' }
+            };
+            const typeData = typeIcons[n.type] || typeIcons.general;
+            
+            const timeAgo = getTimeAgo(n.createdAt);
+            
+            return `
+                <div style="
+                    background: ${n.isRead ? cardBg : `${accentColor}10`};
+                    border: 1px solid ${n.isRead ? cardBorder : `${accentColor}30`};
+                    border-right: 3px solid ${typeData.color};
+                    border-radius: 12px;
+                    padding: 12px 14px;
+                    margin-bottom: 10px;
+                    transition: 0.3s;
+                    position: relative;
+                ">
+                    ${!n.isRead ? `
+                        <span style="
+                            position: absolute;
+                            top: 10px;
+                            left: 10px;
+                            width: 8px;
+                            height: 8px;
+                            background: ${typeData.color};
+                            border-radius: 50%;
+                            animation: bellPulse 1.5s ease-in-out infinite;
+                        "></span>
+                    ` : ''}
+                    
+                    <div style="display:flex; gap:12px; align-items:flex-start;">
+                        <div style="
+                            width: 36px;
+                            height: 36px;
+                            border-radius: 10px;
+                            background: ${typeData.color}20;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            flex-shrink: 0;
+                        ">
+                            <i class="fas ${typeData.icon}" style="color:${typeData.color}; font-size:15px;"></i>
+                        </div>
+                        
+                        <div style="flex:1; min-width:0;">
+                            <div style="
+                                color: ${textColor};
+                                font-weight: ${n.isRead ? '600' : '800'};
+                                font-size: 14px;
+                                margin-bottom: 3px;
+                            ">
+                                ${escapeHtml(n.title)}
+                            </div>
+                            <div style="
+                                color: ${textMuted};
+                                font-size: 12px;
+                                line-height: 1.5;
+                                margin-bottom: 5px;
+                            ">
+                                ${escapeHtml(n.message)}
+                            </div>
+                            <div style="
+                                color: ${textMuted};
+                                font-size: 10px;
+                                display:flex;
+                                align-items:center;
+                                gap:4px;
+                            ">
+                                <i class="fas fa-clock" style="font-size:9px;"></i>
+                                ${timeAgo}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+    
+    modal.innerHTML = `
+        <div style="
+            background: ${bgColor};
+            border-radius: 24px;
+            padding: 0;
+            max-width: 480px;
+            width: 100%;
+            max-height: 88vh;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid ${cardBorder};
+            box-shadow: 0 25px 60px rgba(0,0,0,0.4);
+            overflow: hidden;
+        ">
+            <!-- الهيدر -->
+            <div style="
+                padding: 18px 20px;
+                border-bottom: 2px solid ${cardBorder};
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                background: ${isLightMode ? 'rgba(108,76,224,0.04)' : 'rgba(255,255,255,0.02)'};
+            ">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <div style="
+                        width: 38px;
+                        height: 38px;
+                        border-radius: 50%;
+                        background: ${accentColor}20;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: 17px;
+                        color: ${accentColor};
+                    ">
+                        <i class="fas fa-bell"></i>
+                    </div>
+                    <div>
+                        <h3 style="
+                            color: ${textColor};
+                            font-size: 17px;
+                            font-weight: 800;
+                            margin: 0;
+                        ">الإشعارات</h3>
+                        <p style="
+                            color: ${textMuted};
+                            font-size: 11px;
+                            margin: 2px 0 0;
+                        ">
+                            ${myNotifications.length} إشعار
+                        </p>
+                    </div>
+                </div>
+                
+                <div style="display:flex; gap:6px; align-items:center;">
+                    ${myNotifications.filter(n => !n.isRead).length > 0 ? `
+                        <button onclick="markAllAsRead()" style="
+                            background: transparent;
+                            border: 1px solid ${accentColor}40;
+                            color: ${accentColor};
+                            padding: 5px 12px;
+                            border-radius: 20px;
+                            font-family: 'Cairo', sans-serif;
+                            font-size: 11px;
+                            font-weight: 600;
+                            cursor: pointer;
+                            transition: 0.3s;
+                        "
+                        onmouseover="this.style.background='${accentColor}15'"
+                        onmouseout="this.style.background='transparent'">
+                            <i class="fas fa-check-double"></i> تعليم الكل
+                        </button>
+                    ` : ''}
+                    
+                    <button onclick="closeNotificationsModal()" style="
+                        width: 32px;
+                        height: 32px;
+                        border-radius: 50%;
+                        background: transparent;
+                        border: none;
+                        color: ${textMuted};
+                        cursor: pointer;
+                        font-size: 20px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        transition: 0.3s;
+                    "
+                    onmouseover="this.style.background='${cardBg}'"
+                    onmouseout="this.style.background='transparent'">
+                        &times;
+                    </button>
+                </div>
+            </div>
+            
+            <!-- قائمة الإشعارات -->
+            <div style="
+                flex: 1;
+                overflow-y: auto;
+                padding: 15px;
+            ">
+                ${notificationsHtml}
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // ===== نعلم كل الإشعارات كمقروءة بعد فتح النافذة =====
+    setTimeout(() => {
+        markAllMyNotificationsAsRead();
+    }, 1000);
+}
+
+// ============================================================
+//              🔔 MARK AS READ
+// ============================================================
+
+async function markAllMyNotificationsAsRead() {
+    if (!currentUser) return;
+    
+    let hasChanges = false;
+    appData.notifications.forEach(n => {
+        if (n.studentId === currentUser.id && !n.isRead) {
+            n.isRead = true;
+            n.readAt = new Date().toISOString();
+            hasChanges = true;
+        }
+    });
+    
+    if (hasChanges) {
+        await saveAllDataToFirebase();
+        console.log('✅ All notifications marked as read');
+    }
+}
+
+async function markAllAsRead() {
+    await markAllMyNotificationsAsRead();
+    showToast('✅ تم تعليم كل الإشعارات كمقروءة', 'success');
+    closeNotificationsModal();
+    // نحدث الجرس
+    updateNotificationBell();
+}
+
+function closeNotificationsModal() {
+    const modal = document.getElementById('notificationsModal');
+    if (modal) modal.remove();
+    // نحدث الجرس بعد ما يقفل
+    updateNotificationBell();
+}
+
+// ============================================================
+//              🔔 UPDATE BELL (بدون إعادة رسم الصفحة)
+// ============================================================
+
+function updateNotificationBell() {
+    if (!currentUser || currentUser.isAdmin) return;
+    
+    const bell = document.getElementById('notificationBell');
+    if (!bell) return;
+    
+    const unreadCount = appData.notifications.filter(n => 
+        n.studentId === currentUser.id && !n.isRead
+    ).length;
+    
+    // نشيل القديم
+    const oldBadge = bell.querySelector('span');
+    if (oldBadge) oldBadge.remove();
+    
+    // نضيف الجديد لو في غير مقروء
+    if (unreadCount > 0) {
+        const badge = document.createElement('span');
+        badge.style.cssText = `
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+            font-size: 9px;
+            font-weight: 700;
+            min-width: 16px;
+            height: 16px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 4px;
+            font-family: 'Cairo', sans-serif;
+            box-shadow: 0 2px 6px rgba(231,76,60,0.4);
+            animation: bellPulse 1.5s ease-in-out infinite;
+        `;
+        badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+        bell.appendChild(badge);
+    }
+}
+
+// ============================================================
+//              🔔 GET TIME AGO
+// ============================================================
+
+function getTimeAgo(dateString) {
+    const date = new Date(dateString);
+    const now = new Date();
+    const seconds = Math.floor((now - date) / 1000);
+    
+    if (seconds < 60) return 'الآن';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `منذ ${minutes} دقيقة`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `منذ ${hours} ساعة`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `منذ ${days} يوم`;
+    const weeks = Math.floor(days / 7);
+    if (weeks < 4) return `منذ ${weeks} أسبوع`;
+    return date.toLocaleDateString('ar-EG');
 }
 
 async function loadAllDataFromFirebase() {
@@ -5111,6 +5527,7 @@ async function loadAllDataFromFirebase() {
             appData.meetingAttendance = data.meetingAttendance || [];
             appData.exams = data.exams || [];
             appData.examAttendance = data.examAttendance || [];
+            appData.notifications = data.notifications || [];
             console.log('✅ All data loaded from Firebase');
             return true;
         } else {
@@ -11517,6 +11934,9 @@ function exportHomeworkDetailsToPDF(homeworkId, filter = 'all') {
                             title="تغيير الوضع">
                         <i class="fas ${isLightMode ? 'fa-sun' : 'fa-moon'}"></i>
                     </button>
+
+                    <!-- 🔔 الجرس -->
+                    ${renderNotificationBell()}
 
                     <!-- اسم الطالب (مختصر) -->
                     <span style="
