@@ -3433,17 +3433,12 @@ function addAccount(username, password, name, classId, className) {
 }
 
 
-// 1️⃣9️⃣ دالة حذف حساب
 function removeAccount(accountId) {
     let accounts = getAccounts();
     accounts = accounts.filter(a => a.id !== accountId);
     saveAccounts(accounts);
     showToast('🗑️ تم حذف الحساب', 'info');
 }
-
-// ============================================================
-//                    LOGIN WITH ACCOUNT - VERIFIED
-// ============================================================
 
 function loginWithAccount(accountId) {
     const accounts = getAccounts();
@@ -3454,19 +3449,89 @@ function loginWithAccount(accountId) {
         return;
     }
     
-    // ===== نحدث آخر تسجيل دخول =====
+    // ===== لو الحساب بتاع Google =====
+    if (account.isGoogle) {
+        loginWithGoogleAccount(account);
+        return;
+    }
+    
+    // ===== لو حساب عادي (أدمن أو طالب) =====
     account.lastLogin = new Date().toISOString();
     saveAccounts(accounts);
     
-    // ===== نخزن الحساب الحالي =====
     localStorage.setItem('currentAccountId', accountId);
     localStorage.setItem('currentUsername', account.username);
     
     console.log('✅ Logged in with account:', account);
-    console.log('✅ All accounts:', getAccounts());
-    
-    // ===== نعمل تسجيل دخول فعلي =====
     loginUser(account.username, account.password);
+}
+
+// ============================================================
+//            LOGIN WITH GOOGLE ACCOUNT (من Local Storage)
+// ============================================================
+
+async function loginWithGoogleAccount(account) {
+    console.log('🔵 Logging in with saved Google account:', account);
+    
+    // ===== نجيب الطالب من Firebase بالـ email أو googleUid =====
+    let student = appData.students.find(s => 
+        (s.email && account.email && s.email.toLowerCase().trim() === account.email.toLowerCase().trim()) ||
+        (s.googleUid && account.googleUid && s.googleUid === account.googleUid)
+    );
+    
+    if (!student) {
+        showToast('⚠️ الحساب غير موجود، يرجى تسجيل الدخول بجوجل مرة أخرى', 'warning');
+        // نمسح الحساب من Local Storage لأنه مش موجود في السيرفر
+        removeAccount(account.id);
+        return;
+    }
+    
+    // ===== نتأكد من حالة الطالب =====
+    if (student.status === 'pending') {
+        showToast('⏳ طلبك قيد المراجعة، يرجى الانتظار حتى يوافق الأدمن', 'warning');
+        return;
+    }
+    
+    if (student.status === 'rejected') {
+        showToast('❌ تم رفض طلبك، يرجى التواصل مع الأدمن', 'error');
+        return;
+    }
+    
+    // ===== نحدث بيانات الحساب في Local Storage =====
+    const accounts = getAccounts();
+    const accIdx = accounts.findIndex(a => a.id === account.id);
+    if (accIdx !== -1) {
+        accounts[accIdx].name = student.name;
+        accounts[accIdx].classId = student.classId;
+        accounts[accIdx].className = student.className || '';
+        accounts[accIdx].lastLogin = new Date().toISOString();
+        accounts[accIdx].email = student.email || account.email;
+        accounts[accIdx].googleUid = student.googleUid || account.googleUid;
+        saveAccounts(accounts);
+    }
+    
+    // ===== نسجل دخول الطالب =====
+    currentUser = student;
+    isAdmin = false;
+    
+    // نخفي صفحة اختيار الحسابات
+    const accountSelection = document.getElementById('accountSelection');
+    const app = document.getElementById('app');
+    if (accountSelection) {
+        accountSelection.classList.remove('active');
+        accountSelection.style.display = 'none';
+    }
+    if (app) app.style.display = 'block';
+    
+    // نخزن الحساب الحالي
+    localStorage.setItem('currentAccountId', account.id);
+    localStorage.setItem('currentUsername', account.username);
+    
+    await registerDeviceToken();
+    renderStudentDashboard();
+    showToast(`🎉 أهلاً بعودتك ${student.name}!`, 'success');
+    
+    console.log('✅ Google account logged in successfully:', student);
 }
 
 // ============================================================
@@ -3645,6 +3710,7 @@ function renderAccounts() {
     accounts.forEach((account, index) => {
         const initial = account.name.charAt(0).toUpperCase();
         const color = colors[index % colors.length];
+        const isGoogle = account.isGoogle === true;
         
         html += `
             <div class="account-card-v2" style="
@@ -3682,14 +3748,14 @@ function renderAccounts() {
                         width: 64px;
                         height: 64px;
                         border-radius: 50%;
-                        background: ${color}25;
+                        background: ${isGoogle ? 'linear-gradient(135deg, #4285F4, #34A853)' : `${color}25`};
                         display: flex;
                         align-items: center;
                         justify-content: center;
                         font-size: 28px;
                         font-weight: 800;
-                        color: ${color};
-                        border: 3px solid ${color}40;
+                        color: ${isGoogle ? '#fff' : color};
+                        border: 3px solid ${isGoogle ? '#4285F4' : `${color}40`};
                         margin-bottom: 8px;
                         position: relative;
                         flex-shrink: 0;
@@ -3734,11 +3800,45 @@ function renderAccounts() {
                         transition: color 0.3s ease;
                     ">@${account.username}</div>
                     
+                    <!-- Google Badge -->
+                    ${isGoogle ? `
+                        <div style="
+                            background: rgba(66,133,244,0.15);
+                            color: #4285F4;
+                            font-size: 9px;
+                            padding: 1px 10px;
+                            border-radius: 10px;
+                            margin-top: 4px;
+                            display: inline-flex;
+                            align-items: center;
+                            gap: 4px;
+                            font-weight: 700;
+                        ">
+                            <i class="fab fa-google" style="font-size: 8px;"></i> Google
+                        </div>
+                    ` : ''}
+                    
                     <!-- Class -->
-                    ${account.className ? `
+                    ${account.className && !isGoogle ? `
                         <div style="
                             background: ${color}15;
                             color: ${color}80;
+                            font-size: 9px;
+                            padding: 1px 10px;
+                            border-radius: 10px;
+                            margin-top: 4px;
+                            display: inline-block;
+                            font-weight: 600;
+                        ">
+                            📚 ${account.className}
+                        </div>
+                    ` : ''}
+                    
+                    <!-- Class for Google -->
+                    ${account.className && isGoogle ? `
+                        <div style="
+                            background: rgba(66,133,244,0.1);
+                            color: #4285F4;
                             font-size: 9px;
                             padding: 1px 10px;
                             border-radius: 10px;
@@ -4327,6 +4427,12 @@ async function loginWithGoogle() {
             
             if (existingAccount) {
                 existingAccount.lastLogin = new Date().toISOString();
+                existingAccount.email = googleEmail;
+                existingAccount.googleUid = existingStudent.googleUid || user.uid;
+                existingAccount.isGoogle = true;
+                existingAccount.name = existingStudent.name;
+                existingAccount.classId = existingStudent.classId;
+                existingAccount.className = existingStudent.className || '';
                 localStorage.setItem('currentAccountId', existingAccount.id);
                 saveAccounts(accounts);
             } else {
@@ -4335,12 +4441,13 @@ async function loginWithGoogle() {
                     id: Date.now(),
                     username: existingStudent.username,
                     email: googleEmail,
+                    googleUid: existingStudent.googleUid || user.uid,
+                    isGoogle: true,
                     name: existingStudent.name,
                     classId: existingStudent.classId,
                     className: existingStudent.className || '',
                     createdAt: new Date().toISOString(),
-                    lastLogin: new Date().toISOString(),
-                    isGoogle: true
+                    lastLogin: new Date().toISOString()
                 };
                 accounts.push(newAccount);
                 localStorage.setItem('currentAccountId', newAccount.id);
@@ -4645,7 +4752,7 @@ function showGoogleSignupModal(email, displayName, photoURL, uid) {
             classId: classId,
             className: cls.name,
             username: username,
-            password: 'google_' + Date.now(), // باسورد عشوائي (مش هيستخدم)
+            password: 'google_' + Date.now(),
             email: email.toLowerCase().trim(),
             photoURL: photoURL || '',
             googleUid: uid,
@@ -4657,6 +4764,27 @@ function showGoogleSignupModal(email, displayName, photoURL, uid) {
         
         appData.students.push(newStudent);
         await saveAllDataToFirebase();
+        
+        // ============================================================
+        // 🔥 نضيف الحساب في Local Storage عشان يظهر في صفحة الحسابات
+        // ============================================================
+        const accounts = getAccounts();
+        const newAccount = {
+            id: Date.now(),
+            username: username,
+            email: email.toLowerCase().trim(),
+            googleUid: uid,
+            isGoogle: true,
+            name: name,
+            classId: classId,
+            className: cls.name,
+            createdAt: new Date().toISOString(),
+            lastLogin: new Date().toISOString()
+        };
+        accounts.push(newAccount);
+        saveAccounts(accounts);
+        localStorage.setItem('currentAccountId', newAccount.id);
+        localStorage.setItem('currentUsername', username);
         
         // ===== نرسل إشعار للأدمن =====
         await sendPushNotification(
