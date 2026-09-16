@@ -4949,35 +4949,40 @@ async function requestNotificationPermission() {
 
 async function registerDeviceToken() {
     try {
-        // ننتظر حتى يتم تحميل OneSignal
+        // 🔥 ننتظر OneSignal لحد 30 ثانية
         if (typeof OneSignal === 'undefined') {
-            console.warn('⏳ OneSignal not loaded yet, waiting...');
-            await new Promise(resolve => {
-                const checkInterval = setInterval(() => {
-                    if (typeof OneSignal !== 'undefined') {
-                        clearInterval(checkInterval);
-                        resolve();
-                    }
-                }, 500);
-                // حد أقصى 10 ثواني
-                setTimeout(resolve, 10000);
-            });
+            console.log('⏳ Waiting for OneSignal in registerDeviceToken...');
+            
+            let attempts = 0;
+            const maxAttempts = 60; // 30 ثانية
+            
+            while (typeof OneSignal === 'undefined' && attempts < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                attempts++;
+            }
         }
         
         if (typeof OneSignal === 'undefined') {
-            console.warn('⚠️ OneSignal not available');
+            console.warn('⚠️ OneSignal still not available after 30 seconds');
             return null;
         }
+        
+        console.log('✅ OneSignal is ready, getting user ID...');
         
         const userId = await OneSignal.User.getUserId();
         console.log('✅ OneSignal User ID:', userId);
         
         if (userId && currentUser) {
-            // نخزن الـ ID في Firebase Database عشان نقدر نرسل له إشعارات
+            // نخزن الـ ID في Firebase Database
             await database.ref(`users/${currentUser.id}/onesignalIds`).push(userId);
+            
             // نخزن محلياً
             localStorage.setItem('onesignalUserId', userId);
+            
+            console.log('✅ Device token registered for user:', currentUser.id);
+            console.log('✅ OneSignal ID:', userId);
         }
+        
         return userId;
         
     } catch (error) {
@@ -13871,28 +13876,50 @@ async function startApp() {
         }
         initTheme();
         
-        // ===== تهيئة OneSignal =====
+        // ============================================================
+        // 🔥 تهيئة OneSignal (بطريقة محسّنة)
+        // ============================================================
         updateSplashProgress(85, 'جاري تجهيز الإشعارات...');
         
-        // ننتظر تحميل OneSignal
+        // ننتظر تحميل OneSignal (بحد أقصى 30 ثانية)
+        console.log('⏳ Waiting for OneSignal to load...');
         let onesignalReady = false;
-        for (let i = 0; i < 20; i++) {
-            if (typeof OneSignal !== 'undefined') {
-                onesignalReady = true;
-                break;
-            }
-            await sleep(300);
+        let attempts = 0;
+        const maxAttempts = 60; // 60 × 500ms = 30 ثانية
+        
+        while (typeof OneSignal === 'undefined' && attempts < maxAttempts) {
+            await sleep(500);
+            attempts++;
         }
         
-        if (onesignalReady) {
+        if (typeof OneSignal !== 'undefined') {
+            onesignalReady = true;
+            console.log('✅ OneSignal loaded successfully!');
+            
             try {
+                // نعمل setup للإشعارات
                 setupForegroundNotifications();
-                console.log('✅ OneSignal initialized');
+                console.log('✅ OneSignal foreground notifications setup');
+                
+                // نطلب الإذن
+                if ('Notification' in window) {
+                    if (Notification.permission === 'granted') {
+                        console.log('✅ Notification permission already granted');
+                        
+                        // لو الطالب مسجل دخول، نسجل التوكن
+                        if (currentUser) {
+                            await registerDeviceToken();
+                        }
+                    } else if (Notification.permission === 'default') {
+                        console.log('⏳ Notification permission not yet requested');
+                        // هنطلبها من خلال Overlay
+                    }
+                }
             } catch (error) {
                 console.warn('⚠️ Error setting up OneSignal:', error);
             }
         } else {
-            console.warn('⚠️ OneSignal not loaded after waiting');
+            console.warn('⚠️ OneSignal not loaded after waiting ' + (maxAttempts * 500 / 1000) + ' seconds');
         }
         
         await sleep(300);
@@ -13906,9 +13933,13 @@ async function startApp() {
         hideSplashScreen();
         hideNoInternetScreen();
         
-        // ===== طلب الإذن للإشعارات =====
+        // ============================================================
+        // 🔔 طلب الإذن للإشعارات
+        // ============================================================
         const notifPermission = localStorage.getItem('notifPermissionAsked');
+        
         if (!notifPermission) {
+            // نعرض Overlay لطلب الإذن
             const overlay = document.getElementById('notificationOverlay');
             if (overlay) {
                 showNotificationPermissionOverlay();
@@ -13916,7 +13947,18 @@ async function startApp() {
                 checkAndRouteUser();
             }
         } else {
+            // لو الطلب اتعمل قبل كده، نكمل عادي
             checkAndRouteUser();
+            
+            // لو الإذن متفعّل والطالب مسجل دخول، نسجل التوكن
+            if (onesignalReady && 'Notification' in window && Notification.permission === 'granted') {
+                setTimeout(async () => {
+                    if (currentUser) {
+                        console.log('🔄 Re-registering device token...');
+                        await registerDeviceToken();
+                    }
+                }, 2000);
+            }
         }
         
         console.log('✅ The Best Academy started successfully!');
